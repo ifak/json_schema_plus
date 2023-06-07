@@ -276,7 +276,7 @@ class ReferenceValidator(Validator):
         self.resolved_ref: Optional[ValidatorCollection] = None
 
     def _get_error_impl(self, instance: JsonValue) -> Optional[ValidationError]:
-        return self.resolved_ref.get_error(instance)
+        return self.resolved_ref.invoke(instance)
 
     def _resolve_types(self) -> JsonTypes:
         if not self.types:
@@ -665,7 +665,7 @@ class ValidatorCollection():
 
 class JsonSchemaValidator(Validator):
 
-    validators = {
+    validators_by_key = {
         'not': NotValidator,
         'if': IfThenElseValidator,
         'then': IfThenElseValidator,
@@ -728,20 +728,21 @@ class JsonSchemaValidator(Validator):
                 raise InvalidSchemaException(f"Expected a dict", self.pointer)
 
             # Parse definitions
-            definitions_pointer = root_pointer + 'definitions'
+            definitions_pointer = root_pointer + '$defs'
             for key, sub_schema in defs.items():
                 self._construct_validator(
                     sub_schema, definitions_pointer + key)
 
         # Resolve $refs
-        for pointer, validator in self.validators_by_pointer.items():
-            if not isinstance(validator, ReferenceValidator):
-                continue
-            try:
-                validator.resolved_ref = self.validators_by_pointer[validator.ref]
-            except KeyError:
-                raise InvalidSchemaException(
-                    f"Invalid reference {validator.ref}", pointer)
+        for pointer, collection in self.validators_by_pointer.items():
+            for validator in collection.validators:
+                if not isinstance(validator, ReferenceValidator):
+                    continue
+                try:
+                    validator.resolved_ref = self.validators_by_pointer[validator.ref]
+                except KeyError:
+                    raise InvalidSchemaException(
+                        f"Invalid reference {validator.ref}", pointer)
 
         self._resolve_types()
 
@@ -766,7 +767,7 @@ class JsonSchemaValidator(Validator):
         if len(unparsed_keys) == 0:
             return AnyValidator
 
-        for key, validator in self.validators.items():
+        for key, validator in self.validators_by_key.items():
             if key in unparsed_keys:
                 return validator
 
@@ -774,7 +775,7 @@ class JsonSchemaValidator(Validator):
             f"Unknown keys {list(schema.keys())}", pointer)
 
     def _construct_validator(self, schema: JsonValue, pointer: JsonPointer) -> ValidatorCollection:
-        if pointer in self.validators_by_pointer:
+        if str(pointer) in self.validators_by_pointer:
             raise InvalidSchemaException(
                 f"Duplicate pointer {pointer}", pointer)
 
@@ -783,6 +784,7 @@ class JsonSchemaValidator(Validator):
             if pointer.is_root():
                 _remove_if_exists(unparsed_keys, '$schema')
                 _remove_if_exists(unparsed_keys, '$defs')
+            _remove_if_exists(unparsed_keys, 'deprecated')
         else:
             unparsed_keys = set()
 
