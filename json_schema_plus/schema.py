@@ -8,13 +8,21 @@ from .exception import InvalidSchemaException, TypeException
 
 from io import FileIO
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
-class Config:
+class ValidationConfig:
 
     preprocessor: Optional[Callable] = None
+
+
+@dataclass
+class ParseConfig:
+
+    format_validators: Dict[str, Callable[[str], bool]] = field(
+        default_factory=dict)
+    raise_on_unknown_format: bool = True
 
 
 class ValidationError:
@@ -42,7 +50,7 @@ class Validator:
         self.num_invalid = 0
         self.types: JsonType = None
 
-    def get_error(self, instance: JsonValue, config: Config = Config()) -> Optional[ValidationError]:
+    def get_error(self, instance: JsonValue, config: ValidationConfig = ValidationConfig()) -> Optional[ValidationError]:
         error = self._get_error_impl(instance, config)
         if error:
             self.num_invalid += 1
@@ -50,7 +58,7 @@ class Validator:
             self.num_valid += 1
         return error
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         raise NotImplementedError(f"{self}")
 
     def _construct(self, schema: JsonValue, pointer: JsonPointer) -> "ValidatorCollection":
@@ -105,7 +113,7 @@ class NotValidator(Validator):
         n = self._read_any('not', unparsed_keys)
         self.validators = self._construct(n, pointer + 'not')
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         errors = self.validators.invoke(instance, config)
         if not errors:
             return ValidationError("Sub-schema must not be valid", self)
@@ -146,7 +154,7 @@ class IfThenElseValidator(Validator):
         else:
             self.else_validators = None
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         # This is valid iff:
         # (not(IF) or THEN) and (IF or ELSE)
         # See https://json-schema.org/understanding-json-schema/reference/conditionals.html#implication
@@ -210,7 +218,7 @@ class AllOfValidator(AggregatingValidator):
 
     keyword = 'allOf'
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         sub_errors: List[ValidationError] = []
         for validators in self.sub_validators:
             errors = validators.invoke(instance, config)
@@ -236,7 +244,7 @@ class AnyOfValidator(AggregatingValidator):
 
     keyword = 'anyOf'
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         sub_errors: List[ValidationError] = []
         for validators in self.sub_validators:
             errors = validators.invoke(instance, config)
@@ -258,7 +266,7 @@ class OneOfValidator(AggregatingValidator):
 
     keyword = 'oneOf'
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         sub_errors: List[ValidationError] = []
         for validators in self.sub_validators:
             errors = validators.invoke(instance, config)
@@ -283,10 +291,10 @@ class ReferenceValidator(Validator):
         self.ref = self._read_string('$ref', unparsed_keys)
         self.resolved_ref: Optional[ValidatorCollection] = None
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         errors = self.resolved_ref.invoke(instance, config)
         if errors:
-            return ValidationError("Reference is invalid", self, errors)
+            return ValidationError(f"Reference {self.ref} is invalid", self, errors)
         return None
 
     def _resolve_types(self) -> JsonTypes:
@@ -302,7 +310,7 @@ class ConstValidator(Validator):
         unparsed_keys.remove('const')
         self.value = schema['const']
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if values_are_equal(self.value, instance):
             return None
         return ValidationError(f"{instance} is not {self.value}", self)
@@ -329,9 +337,16 @@ class StringValidator(Validator):
         self.min_length = self._read_float('minLength', unparsed_keys, 0)
         self.max_length = self._read_float(
             'maxLength', unparsed_keys, float('inf'))
-        self.format = self._read_string('format', unparsed_keys, None)
+        self.format_validator = None
+        if 'format' in self.schema:
+            f = self._read_string('format', unparsed_keys)
+            try:
+                self.format_validator = self.root.parse_config.format_validators[f]
+            except KeyError:
+                if self.root.parse_config.raise_on_unknown_format:
+                    raise InvalidSchemaException(f"Unknown format {f}")
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if not isinstance(instance, str):
             return None
         if len(instance) < self.min_length:
@@ -341,6 +356,9 @@ class StringValidator(Validator):
         if self.pattern and self.pattern.search(instance) is None:
             return ValidationError(f"Value does not match pattern", self)
         # TODO: encoding
+        if self.format_validator is not None:
+            if not self.format_validator(instance):
+                return ValidationError(f"Invalid format", self)
         return None
 
     def _resolve_types(self) -> JsonTypes:
@@ -365,7 +383,7 @@ class NumberValidator(Validator):
         if self.multiple_of is not None and self.multiple_of <= 0:
             raise InvalidSchemaException(f"multipleOf must be positive", self)
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if not isinstance(instance, (int, float)):
             return None
 
@@ -436,8 +454,7 @@ class ObjectValidator(Validator):
             self.required.add(value)
 
         # Dependent required
-        dependent_required = self._read_dict(
-            'dependentRequired', unparsed_keys, {})
+        dependent_required = self._read_dict('dependentRequired', unparsed_keys, {})
         self.dependent_required: Dict[str, Set[str]] = {}
         for key, values in dependent_required.items():
             values_set: Set[str] = set()
@@ -463,7 +480,7 @@ class ObjectValidator(Validator):
             self.additional_properties_validator = self._construct(
                 additional_properties, self.pointer + 'additionalProperties')
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if not isinstance(instance, dict):
             return None
 
@@ -496,7 +513,8 @@ class ObjectValidator(Validator):
         if self.additional_properties_validator:
             for key, value in instance.items():
                 if key in not_validated_keys:
-                    errors = self.additional_properties_validator.invoke(value, config)
+                    errors = self.additional_properties_validator.invoke(
+                        value, config)
                     if errors:
                         return ValidationError(f"Property {key} is invalid", self, errors)
 
@@ -529,7 +547,7 @@ class ArrayItemsValidator(Validator):
         self.items_validator = self._construct(
             items, pointer + 'items')
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if not isinstance(instance, list):
             return None
 
@@ -554,7 +572,7 @@ class ArrayMinItemsValidator(Validator):
         self.min_items = self._read_float('minItems', unparsed_keys, 0)
         self.types = ALL_JSON_TYPES
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if not isinstance(instance, list):
             return None
         if len(instance) < self.min_items:
@@ -572,7 +590,7 @@ class ArrayMaxItemsValidator(Validator):
         self.max_items = self._read_float('maxItems', unparsed_keys, 0)
         self.types = ALL_JSON_TYPES
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         if not isinstance(instance, list):
             return None
         if len(instance) > self.max_items:
@@ -597,7 +615,7 @@ class TypeValidator(Validator):
         except TypeException as e:
             raise InvalidSchemaException(str(e), self.pointer)
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         instance_types = from_instance(instance)
         if instance_types.isdisjoint(self.types):
             return ValidationError(f"Expected {self.types}, got {instance_types}", self)
@@ -613,7 +631,7 @@ class EnumValidator(Validator):
         super().__init__(schema, pointer, root, unparsed_keys)
         self.values = self._read_list('enum', unparsed_keys, [])
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         for i in self.values:
             if values_are_equal(instance, i):
                 return None
@@ -633,7 +651,7 @@ class AnyValidator(Validator):
         super().__init__(schema, pointer, root, unparsed_keys)
         self.types = ALL_JSON_TYPES
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         return None
 
 
@@ -643,7 +661,7 @@ class NothingValidator(Validator):
         super().__init__(schema, pointer, root, unparsed_keys)
         self.types = set()
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         return ValidationError(f"Schema is always invalid", self)
 
 
@@ -657,9 +675,10 @@ class ValidatorCollection():
     def __init__(self, validators: List[Validator] = None) -> None:
         self.validators = validators or []
 
-    def invoke(self, instance: JsonValue, config: Config) -> Optional[List[ValidationError]]:
+    def invoke(self, instance: JsonValue, config: ValidationConfig) -> Optional[List[ValidationError]]:
         if config.preprocessor:
             instance = config.preprocessor(instance, self)
+
         result = []
         for i in self.validators:
             error = i.get_error(instance, config)
@@ -721,9 +740,13 @@ class JsonSchemaValidator(Validator):
         'type': TypeValidator,
     }
 
-    def __init__(self, schema: JsonValue) -> None:
+    def __init__(self, schema: JsonValue, parse_config: Optional[ParseConfig] = None) -> None:
         root_pointer = JsonPointer([])
         super().__init__(schema, root_pointer, self, set())
+        if parse_config is None:
+            self.parse_config = ParseConfig()
+        else:
+            self.parse_config = parse_config
 
         self.validators_by_pointer: Dict[str, ValidatorCollection] = {}
 
@@ -759,7 +782,7 @@ class JsonSchemaValidator(Validator):
 
         self._resolve_types()
 
-    def _get_error_impl(self, instance: JsonValue, config: Config) -> Optional[ValidationError]:
+    def _get_error_impl(self, instance: JsonValue, config: ValidationConfig) -> Optional[ValidationError]:
         errors = self.validators.invoke(instance, config)
         if errors:
             return ValidationError(f"Schema is invalid", self, errors)
