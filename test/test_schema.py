@@ -26,23 +26,18 @@ class SchemaTestSuite(TestCase):
             'ref.json',
             'refRemote.json',
             'defs.json',
+            'format.json',
             'id.json',
             'vocabulary.json',
             'unevaluatedProperties.json',
             'unevaluatedItems.json',
             'unknownKeyword.json',
-            'minContains.json',
-            'maxContains.json',
             'uniqueItems.json',
-            'propertyNames.json',
-            'prefixItems.json',
-            'infinite-loop-detection.json',
             'dynamicRef.json',
             'dependentSchemas.json',
-            'default.json',
             'contentMediaType',
-            'contains.json',
             'content.json',
+            'not.json',
         ]
 
         root = os.path.join(
@@ -57,22 +52,21 @@ class SchemaTestSuite(TestCase):
             for test_suite in test_suites:
                 print(test_suite['description'])
                 try:
-                    validator = schema.JsonSchemaValidator(
-                        test_suite['schema'])
+                    validator = schema.JsonSchemaValidator(test_suite['schema'])
                 except exception.InvalidSchemaException as e:
                     print(e)
                     print(Colors.RED + "FAIL (parse)" + Colors.ENDC)
-                    continue
+                    raise e
                 self.assertIsNotNone(validator.types)
                 for test_case in test_suite['tests']:
                     valid = test_case['valid']
-                    error = validator.get_error(test_case['data'])
+                    result = validator.invoke(test_case['data'])
                     sys.stdout.write(" * " + test_case['description'] + ": ")
-                    if (error is None) != valid:
+                    if result.ok != valid:
                         sys.stdout.write(Colors.RED + "FAIL\n" + Colors.ENDC)
                     else:
                         sys.stdout.write(Colors.GREEN + "PASS\n" + Colors.ENDC)
-                    if error:
-                        sys.stdout.write("\n")
-                        error.dump()
+                    sys.stdout.write("\n")
+                    self.assertEqual(result.ok, valid)
+                    result.dump()
             print()

@@ -8,3 +8,7 @@ class TypeException(JsonSchemaPlusException):
 
 class InvalidSchemaException(JsonSchemaPlusException):
     pass
+
+
+class JsonPointerException(JsonSchemaPlusException):
+    pass
