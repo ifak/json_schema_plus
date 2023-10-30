@@ -4,7 +4,7 @@ import sys
 
 from unittest import TestCase
 
-from json_schema_plus import schema, exception
+from json_schema_plus import parse_schema, exception
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
@@ -35,13 +35,10 @@ class SchemaTestSuite(TestCase):
             'uniqueItems.json',
             'dynamicRef.json',
             'dependentSchemas.json',
-            'contentMediaType',
-            'content.json',
             'not.json',
         ]
 
-        root = os.path.join(
-            script_dir, 'JSON-Schema-Test-Suite/tests/draft2020-12')
+        root = os.path.join(script_dir, 'JSON-Schema-Test-Suite/tests/draft2020-12')
         for file in sorted(os.listdir(root)):
             print(Colors.BOLD + file + Colors.ENDC)
             if file in blacklist:
@@ -52,7 +49,7 @@ class SchemaTestSuite(TestCase):
             for test_suite in test_suites:
                 print(test_suite['description'])
                 try:
-                    validator = schema.JsonSchemaValidator(test_suite['schema'])
+                    validator = parse_schema(test_suite['schema'])
                 except exception.InvalidSchemaException as e:
                     print(e)
                     print(Colors.RED + "FAIL (parse)" + Colors.ENDC)
@@ -60,7 +57,7 @@ class SchemaTestSuite(TestCase):
                 self.assertIsNotNone(validator.types)
                 for test_case in test_suite['tests']:
                     valid = test_case['valid']
-                    result = validator.invoke(test_case['data'])
+                    result = validator.validate(test_case['data'])
                     sys.stdout.write(" * " + test_case['description'] + ": ")
                     if result.ok != valid:
                         sys.stdout.write(Colors.RED + "FAIL\n" + Colors.ENDC)
