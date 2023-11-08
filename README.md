@@ -80,5 +80,17 @@ print(validator.get_types())
 ```
 
 ## Validation Performance
-TBD
+You can drastically increase validation performance by using short circuit evaluation (SCE).
+By using SCE, evaluation terminates as soon as the first error in the JSON instance is found.
+For example, an allOf does not visit all sub schemas, if the first sub-schema already fails.
+You can activate SCE as follows:
 
+```python
+from json_schema_plus import schema
+
+# use parse_schema to build your validator...
+
+config = schema.ValidationConfig(short_circuit_evaluation=True)
+result = validator.validate({"foo": "bar"}, config)
+```
+Please note, that SCE does not work together with coverage measurement.

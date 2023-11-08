@@ -531,6 +531,7 @@ class StringFormatValidator(KeywordsValidator):
     def get_types(self) -> JsonTypes:
         return ALL_JSON_TYPES
 
+
 class NumberLimitValidator(KeywordsValidator):
 
     operator = None
@@ -1227,7 +1228,10 @@ class DictSchemaValidator(SchemaValidator):
 
         kw_results: List[KeywordValidationResult] = []
         for i in self.kw_validators:
-            kw_results.extend(i.invoke(instance, config))
+            sub_results = i.invoke(instance, config)
+            kw_results.extend(sub_results)
+            if config.short_circuit_evaluation and any(not i.ok() for i in sub_results):
+                break
 
         return SchemaValidationResult(self, kw_results)
 
