@@ -12,3 +12,7 @@ class InvalidSchemaException(JsonSchemaPlusException):
 
 class JsonPointerException(JsonSchemaPlusException):
     pass
+
+
+class CoverageException(JsonSchemaPlusException):
+    pass

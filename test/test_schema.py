@@ -1,10 +1,10 @@
 import os
 import json
-import sys
 
 from unittest import TestCase
 
-from json_schema_plus import parse_schema, exception
+from json_schema_plus import parse_schema, coverage, exception
+
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
@@ -12,13 +12,6 @@ script_dir = os.path.dirname(os.path.realpath(__file__))
 class SchemaTestSuite(TestCase):
 
     def test_all(self):
-
-        class Colors:
-            GREEN = '\033[92m'
-            ORANGE = '\033[93m'
-            RED = '\033[91m'
-            BOLD = '\033[1m'
-            ENDC = '\033[0m'
 
         blacklist = [
             'optional',
@@ -38,32 +31,49 @@ class SchemaTestSuite(TestCase):
             'not.json',
         ]
 
+        cov_blacklist = [
+            "ignore then without if",
+            "ignore else without if",
+            "maxContains without contains is ignored",
+            "minContains without contains is ignored",
+            "required default validation",
+            "required with empty array"
+        ]
         root = os.path.join(script_dir, 'JSON-Schema-Test-Suite/tests/draft2020-12')
+        output = True
         for file in sorted(os.listdir(root)):
-            print(Colors.BOLD + file + Colors.ENDC)
+            if output:
+                print(file)
             if file in blacklist:
-                print(Colors.ORANGE + "SKIP" + Colors.ENDC + "\n")
+                if output:
+                    print("SKIP")
                 continue
             with open(os.path.join(root, file)) as f:
                 test_suites = json.load(f)
             for test_suite in test_suites:
-                print(test_suite['description'])
-                try:
-                    validator = parse_schema(test_suite['schema'])
-                except exception.InvalidSchemaException as e:
-                    print(e)
-                    print(Colors.RED + "FAIL (parse)" + Colors.ENDC)
-                    raise e
+                if output:
+                    print(test_suite['description'])
+                validator = parse_schema(test_suite['schema'])
                 self.assertIsNotNone(validator.types)
+
+                try:
+                    cov = coverage.SchemaCoverage(validator)
+                except exception.CoverageException:
+                    cov = None
+                if cov:
+                    self.assertEqual(cov.coverage(), 0)
                 for test_case in test_suite['tests']:
                     valid = test_case['valid']
                     result = validator.validate(test_case['data'])
-                    sys.stdout.write(" * " + test_case['description'] + ": ")
-                    if result.ok != valid:
-                        sys.stdout.write(Colors.RED + "FAIL\n" + Colors.ENDC)
-                    else:
-                        sys.stdout.write(Colors.GREEN + "PASS\n" + Colors.ENDC)
-                    sys.stdout.write("\n")
+                    if cov:
+                        cov.update(result)
+                    if output:
+                        print(" * " + test_case['description'])
                     self.assertEqual(result.ok, valid)
-                    result.dump()
-            print()
+                    if output:
+                        result.dump()
+                if cov:
+                    if test_suite['description'] in cov_blacklist:
+                        continue
+                    self.assertGreater(cov.coverage(), .0)
+                    print(cov.coverage())

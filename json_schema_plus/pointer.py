@@ -18,6 +18,11 @@ class JsonPointer:
     def __add__(self, other: str) -> "JsonPointer":
         if isinstance(other, str) or isinstance(other, int):
             return JsonPointer(self.elements + [other])
+        elif isinstance(other, list):
+            result = self
+            for i in other:
+                result = result + i
+            return result
         raise JsonPointerException(f"Can only add str or int, got {other}")
 
     def is_root(self) -> bool:

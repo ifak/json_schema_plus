@@ -5,7 +5,6 @@ from .pointer import JsonPointer
 from typing import Dict, List, Optional, Set, Callable, Pattern, Tuple
 from .exception import InvalidSchemaException, TypeException, JsonPointerException
 
-from io import FileIO
 import re
 from dataclasses import dataclass, field
 import warnings
@@ -31,21 +30,13 @@ class ParseConfig:
 
 class KeywordValidationResult:
 
-    def __init__(self, sub_pointer: List[str], sub_schema_results: List["SchemaValidationResult"] = None, error_message: Optional[str] = None):
+    def __init__(self, sub_pointer: List[str], sub_schema_results: Optional[List["SchemaValidationResult"]] = None, error_message: Optional[str] = None):
         self.sub_pointer = sub_pointer
         self.sub_schema_results = sub_schema_results or []
         self.error_message = error_message
 
     def ok(self) -> bool:
         return self.error_message is None
-
-    def dump(self, indent: int):
-        if self.error_message is None:
-            print("  " * indent + "<OK>")
-        else:
-            print("  " * indent + self.error_message)
-        for i in self.sub_schema_results:
-            i.dump(indent+1)
 
     def __repr__(self) -> str:
         return "OK" if self.ok() else "Fail!"
@@ -54,16 +45,23 @@ class KeywordValidationResult:
 class SchemaValidationResult:
     def __init__(self, validator: "SchemaValidator", sub_results: List[KeywordValidationResult]) -> None:
         self.validator = validator
-        self.sub_results = sub_results
-        if len(self.sub_results) == 0:
+        self.keyword_results = sub_results
+        if len(self.keyword_results) == 0:
             self.ok = True
         else:
-            self.ok = all([i.ok() for i in self.sub_results])
+            self.ok = all([i.ok() for i in self.keyword_results])
 
     def dump(self, indent=0):
-        print("  " * indent + f"{self.validator.pointer}:")
-        for result in self.sub_results:
-            result.dump(indent+1)
+        print("    " * indent + f"{self.validator.pointer}:")
+        if self.ok:
+            print("    " * indent + "  OK")
+        else:
+            print("    " * indent + "  Errors:")
+            for result in self.keyword_results:
+                if result.error_message:
+                    print("    " * indent + "  - " + result.error_message)
+                    for i in result.sub_schema_results:
+                        i.dump(indent+1)
 
 
 class Globals:
@@ -82,44 +80,55 @@ class KeywordsValidator:
     Validates an instance against one or more keywords in a schema
     """
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
         self.parent = parent
         self.types: JsonType = None
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         raise NotImplementedError(f"{self}")
 
+    def sub_pointers(self) -> List[List[str]]:
+        raise NotImplementedError(f"{self}")
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        raise NotImplementedError(f"{self}")
+
 
 class NotValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         n = self.parent._read_any('not', unparsed_keys)
-        self.sub_validator = _construct(n, self.parent.pointer + 'not', self.parent.globals)
+        self.sub_validator = _construct(n, self.parent.pointer + 'not', self.parent.globals, config)
         self.types = self.sub_validator.types
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         sub_result = self.sub_validator._validate(instance, config)
-        if sub_result.ok():
+        if sub_result.ok:
             return [KeywordValidationResult(['not'], [sub_result], "Sub-schema must not be valid")]
         else:
             return [KeywordValidationResult(['not'], [sub_result])]
 
+    def sub_schemas(self) -> List[List[str]]:
+        return [self.sub_validator]
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [["not"]]
 
 class IfThenElseValidator(KeywordsValidator):
 
-    def __get_validator(self, kw: str, unparsed_keys: Set[str]) -> Optional["DictSchemaValidator"]:
+    def __get_validator(self, kw: str, unparsed_keys: Set[str], config: ParseConfig) -> Optional["DictSchemaValidator"]:
         if kw in self.parent.schema:
             schema = self.parent._read_any(kw, unparsed_keys)
-            return _construct(schema, self.parent.pointer + kw, self.parent.globals)
+            return _construct(schema, self.parent.pointer + kw, self.parent.globals, config)
         else:
             return None
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
-        self.if_validator = self.__get_validator('if', unparsed_keys)
-        self.then_validator = self.__get_validator('then', unparsed_keys)
-        self.else_validator = self.__get_validator('else', unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
+        self.if_validator = self.__get_validator('if', unparsed_keys, config)
+        self.then_validator = self.__get_validator('then', unparsed_keys, config)
+        self.else_validator = self.__get_validator('else', unparsed_keys, config)
         self.types = set()
         if self.then_validator:
             self.types |= self.then_validator.types
@@ -143,15 +152,35 @@ class IfThenElseValidator(KeywordsValidator):
         if if_result.ok:
             if self.then_validator:
                 then_result = self.then_validator._validate(instance, config)
-                if not then_result.ok:
+                if then_result.ok:
+                    return [KeywordValidationResult(['if'])]
+                else:
                     return [KeywordValidationResult(['if'], [if_result, then_result], f"IF is valid but THEN is invalid")]
         else:
             if self.else_validator:
                 else_result = self.else_validator._validate(instance, config)
-                if not else_result.ok:
+                if else_result.ok:
+                    return [KeywordValidationResult(['if'])]
+                else:
                     return [KeywordValidationResult(['if'], [if_result, else_result], f"IF is invalid but ELSE is invalid")]
 
         return [KeywordValidationResult(['if'], [if_result])]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        result = []
+        if self.if_validator:
+            result.append(self.if_validator)
+        if self.then_validator:
+            result.append(self.then_validator)
+        if self.else_validator:
+            result.append(self.else_validator)
+        return result
+
+    def sub_pointers(self) -> List[List[str]]:
+        if self.if_validator:
+            return [['if']]
+        else:
+            return []
 
 
 class AggregatingValidator(KeywordsValidator):
@@ -160,23 +189,29 @@ class AggregatingValidator(KeywordsValidator):
     """
     keyword = ''
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         l = self.parent._read_list(self.keyword, unparsed_keys)
         self.sub_validators: List[DictSchemaValidator] = []
         for idx, sub_schema in enumerate(l):
-            sv = _construct(sub_schema, self.parent.pointer + self.keyword + idx, self.parent.globals)
+            sv = _construct(sub_schema, self.parent.pointer + self.keyword + idx, self.parent.globals, config)
             self.sub_validators.append(sv)
         if not self.sub_validators:
             raise InvalidSchemaException(f"Must specify at least one sub-schema", self.parent.pointer)
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [[self.keyword]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return self.sub_validators
 
 
 class AllOfValidator(AggregatingValidator):
 
     keyword = 'allOf'
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES.copy()
         for i in self.sub_validators:
             self.types &= i.types
@@ -203,8 +238,8 @@ class AnyOfValidator(AggregatingValidator):
 
     keyword = 'anyOf'
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = set()
         for sub_validator in self.sub_validators:
             self.types |= sub_validator.types
@@ -229,8 +264,8 @@ class OneOfValidator(AggregatingValidator):
 
     keyword = 'oneOf'
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = set()
         for sub_validator in self.sub_validators:
             self.types |= sub_validator.types
@@ -251,8 +286,8 @@ class OneOfValidator(AggregatingValidator):
 
 class ReferenceValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.ref = self.parent._read_string('$ref', unparsed_keys)
         try:
             pointer = JsonPointer.from_string(self.ref)
@@ -263,7 +298,7 @@ class ReferenceValidator(KeywordsValidator):
             self.ref_validator = parent.globals.validators_by_pointer[str(pointer)]
         except KeyError:
             ref_schema = pointer.lookup(self.parent.globals.schema)
-            self.ref_validator = _construct(ref_schema, pointer, self.parent.globals)
+            self.ref_validator = _construct(ref_schema, pointer, self.parent.globals, config)
 
         self.types = self.ref_validator.types
 
@@ -274,11 +309,17 @@ class ReferenceValidator(KeywordsValidator):
         else:
             return [KeywordValidationResult(['$ref'], [ref_result], f"Reference {self.ref} is invalid")]
 
+    def sub_pointers(self) -> List[List[str]]:
+        return [["$ref"]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return [self.ref_validator]
+
 
 class ConstValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         unparsed_keys.remove('const')
         self.value = parent.schema['const']
         self.types = from_instance(self.value)
@@ -289,11 +330,17 @@ class ConstValidator(KeywordsValidator):
         else:
             return [KeywordValidationResult(['const'], [], f"{instance} is not {self.value}")]
 
+    def sub_pointers(self) -> List[List[str]]:
+        return ['const']
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
 
 class StringContentValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
 
         # content encoding
@@ -336,13 +383,26 @@ class StringContentValidator(KeywordsValidator):
                 if config.short_circuit_evaluation:
                     return result
 
+        result.append(KeywordValidationResult(['contentMediaType']))
+        result.append(KeywordValidationResult(['contentSchema']))
+
         return result
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [
+            ['contentEncoding'],
+            ['contentMediaType'],
+            ['contentSchema']
+        ]
 
 
 class StringPatternValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
 
         pattern = self.parent._read_string('pattern', unparsed_keys)
@@ -357,55 +417,70 @@ class StringPatternValidator(KeywordsValidator):
         else:
             return [KeywordValidationResult(['pattern'])]
 
+    def sub_pointers(self) -> List[List[str]]:
+        return [["pattern"]]
 
-class StringMinLengthValidator(KeywordsValidator):
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+
+class StringLimitValidator(KeywordsValidator):
+
+    keyword = ''
+    operator = None
+    message = ''
+
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
-        self.min_length = self.parent._read_float('minLength', unparsed_keys)
+        self.limit = self.parent._read_float(self.keyword, unparsed_keys)
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         if not isinstance(instance, str):
             return []
 
-        if len(instance) >= self.min_length:
-            return [KeywordValidationResult(['minLength'])]
+        if self.operator(len(instance), self.limit):
+            return [KeywordValidationResult([self.keyword])]
         else:
-            return [KeywordValidationResult(['minLength'], [], f"Value is shorter than {self.min_length}")]
+            return [KeywordValidationResult([self.keyword], [], self.message.format(self.limit))]
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [[self.keyword]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
 
 
-class StringMaxLengthValidator(KeywordsValidator):
+class StringMinLengthValidator(StringLimitValidator):
+    keyword = 'minLength'
+    operator = operator.ge
+    message = "Value is shorter than {}"
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
-        self.types = ALL_JSON_TYPES
-        self.max_length = self.parent._read_float('maxLength', unparsed_keys)
 
-    def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
-        if not isinstance(instance, str):
-            return []
-
-        if len(instance) <= self.max_length:
-            return [KeywordValidationResult(['maxLength'])]
-        else:
-            return [KeywordValidationResult(['maxLength'], [], f"Value is longer than {self.max_length}")]
+class StringMaxLengthValidator(StringLimitValidator):
+    keyword = 'maxLength'
+    operator = operator.le
+    message = "Value is longer than {}"
 
 
 class StringFormatValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
         self.format_name = self.parent._read_string('format', unparsed_keys)
         try:
-            self.format_validator = self.parent.globals.parse_config.format_validators[self.format_name]
+            self.format_validator = config.format_validators[self.format_name]
         except KeyError:
-            if self.parent.globals.parse_config.raise_on_unknown_format:
+            if config.raise_on_unknown_format:
                 raise InvalidSchemaException(f"Unknown format {self.format_name}")
+            else:
+                self.format_validator = None
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         if not isinstance(instance, str):
+            return []
+        if self.format_validator is None:
             return []
         if self.format_validator(instance):
             return [KeywordValidationResult(['format'])]
@@ -419,8 +494,8 @@ class NumberLimitValidator(KeywordsValidator):
     keyword = ''
     message = ''
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.limit = self.parent._read_float(self.keyword, unparsed_keys)
         self.types = ALL_JSON_TYPES
 
@@ -432,6 +507,12 @@ class NumberLimitValidator(KeywordsValidator):
             return [KeywordValidationResult([self.keyword])]
         else:
             return [KeywordValidationResult([self.keyword], [], self.message.format(self.limit))]
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [[self.keyword]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
 
 
 class NumberMaximumValidator(NumberLimitValidator):
@@ -460,8 +541,8 @@ class NumberExclusiveMinimumValidator(NumberLimitValidator):
 
 class NumberMultipleOfValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
         self.multiple_of = self.parent._read_float('multipleOf', unparsed_keys)
         if self.multiple_of <= 0:
@@ -482,53 +563,65 @@ class NumberMultipleOfValidator(KeywordsValidator):
         else:
             return [KeywordValidationResult(['multipleOf'], [], f"Must be multiple of {self.multiple_of}")]
 
+    def sub_pointers(self) -> List[List[str]]:
+        return [['multipleOf']]
 
-class ObjectMinPropertiesValidator(KeywordsValidator):
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+
+class ObjectPropertyLimitValidator(KeywordsValidator):
+
+    keyword = ''
+    operator = None
+    message = ''
+
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
-        self.min_properties = self.parent._read_float('minProperties', unparsed_keys, 0)
+        self.limit = self.parent._read_float(self.keyword, unparsed_keys)
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         if not isinstance(instance, dict):
             return []
-        if len(instance.keys()) >= self.min_properties:
-            return [KeywordValidationResult(['minProperties'])]
+        if self.operator(len(instance.keys()), self.limit):
+            return [KeywordValidationResult([self.keyword])]
         else:
-            return [KeywordValidationResult(['minProperties'], [], f"Must have at least {self.min_properties} properties")]
+            return [KeywordValidationResult([self.keyword], [], self.message.format(self.limit))]
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [[self.keyword]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
 
 
-class ObjectMaxPropertiesValidator(KeywordsValidator):
+class ObjectMinPropertiesValidator(ObjectPropertyLimitValidator):
+    keyword = 'minProperties'
+    operator = operator.ge
+    message = "Must have at least {} properties"
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
-        self.types = ALL_JSON_TYPES
-        self.max_properties = self.parent._read_float('maxProperties', unparsed_keys, float('inf'))
 
-    def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
-        if not isinstance(instance, dict):
-            return []
-        if len(instance.keys()) <= self.max_properties:
-            return [KeywordValidationResult(['maxProperties'])]
-        else:
-            return [KeywordValidationResult(['maxProperties'], [], f"Must have at most {self.max_properties} properties")]
+class ObjectMaxPropertiesValidator(ObjectPropertyLimitValidator):
+    keyword = 'maxProperties'
+    operator = operator.le
+    message = "Must have at most {} properties"
 
 
 class ObjectRequiredValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
         required = self.parent._read_list('required', unparsed_keys, [])
-        self.required: Set[str] = set()
+        self.required: List[str] = []
         for idx, value in enumerate(required):
             sub_pointer = self.parent.pointer + "required" + idx
             if value in self.required:
                 raise InvalidSchemaException(f"Duplicate required value {value}", sub_pointer)
             if not isinstance(value, str):
                 raise InvalidSchemaException(f"Required value must be a string", sub_pointer)
-            self.required.add(value)
+            self.required.append(value)
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         if not isinstance(instance, dict):
@@ -545,11 +638,17 @@ class ObjectRequiredValidator(KeywordsValidator):
 
         return result
 
+    def sub_pointers(self) -> List[List[str]]:
+        return [['required', i] for i in range(len(self.required))]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
 
 class ObjectDependentRequiredValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
         dependent_required = self.parent._read_dict('dependentRequired', unparsed_keys, {})
         self.dependent_required: Dict[str, Set[str]] = {}
@@ -581,14 +680,23 @@ class ObjectDependentRequiredValidator(KeywordsValidator):
                             return result
         return result
 
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
+    def sub_pointers(self) -> List[List[str]]:
+        result = []
+        for property, dependent_properties in self.dependent_required.items():
+            result.extend(["dependentRequired", property, i] for i in dependent_properties)
+        return result
+
 
 class ObjectPropertyNamesValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
         schema = self.parent._read_any('propertyNames', unparsed_keys)
-        self.name_validator = _construct(schema, parent.pointer + 'propertyNames', parent.globals)
+        self.name_validator = _construct(schema, parent.pointer + 'propertyNames', parent.globals, config)
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         if not isinstance(instance, dict):
@@ -607,18 +715,24 @@ class ObjectPropertyNamesValidator(KeywordsValidator):
 
         return result
 
+    def sub_pointers(self) -> List[List[str]]:
+        return [["propertyNames"]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return [self.name_validator]
+
 
 class ObjectPropertiesValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
 
         # Properties
         properties = self.parent._read_dict('properties', unparsed_keys, {})
         self.property_validators: Dict[str, DictSchemaValidator] = {}
         for name, sub_schema in properties.items():
-            self.property_validators[name] = _construct(sub_schema, self.parent.pointer + name, self.parent.globals)
+            self.property_validators[name] = _construct(sub_schema, self.parent.pointer + name, self.parent.globals, config)
 
         # Pattern properties
         pattern_properties = self.parent._read_dict('patternProperties', unparsed_keys, {})
@@ -627,7 +741,7 @@ class ObjectPropertiesValidator(KeywordsValidator):
             self.pattern_properties.append((
                 pattern,
                 re.compile(pattern),
-                _construct(sub_schema, self.parent.pointer + pattern, self.parent.globals)
+                _construct(sub_schema, self.parent.pointer + pattern, self.parent.globals, config)
             ))
 
         # Additional properties
@@ -638,14 +752,15 @@ class ObjectPropertiesValidator(KeywordsValidator):
             self.additional_properties_validator = _construct(
                 additional_properties,
                 self.parent.pointer + 'additionalProperties',
-                self.parent.globals
+                self.parent.globals,
+                config
             )
 
         # unevaluated properties
         # TODO
         if 'unevaluatedProperties' in parent.schema:
             unevaluated_properties = self.parent._read_any('unevaluatedProperties', unparsed_keys, None)
-            self.unevaluated_properties_validator = _construct(unevaluated_properties, self.parent.pointer + 'unevaluated_properties', self.parent.globals)
+            self.unevaluated_properties_validator = _construct(unevaluated_properties, self.parent.pointer + 'unevaluated_properties', self.parent.globals, config)
         else:
             self.unevaluated_properties_validator = None
 
@@ -698,8 +813,7 @@ class ObjectPropertiesValidator(KeywordsValidator):
             # TODO: must check not validated keys of sub-schemas, too
             for key in unevaluated_properties:
                 sub_result = self.unevaluated_properties_validator._validate(instance[key], config)
-                # TODO: this key is wrong
-                if sub_result.ok():
+                if sub_result.ok:
                     result.append(KeywordValidationResult(['unevaluatedProperties'], [sub_result]))
                 else:
                     result.append(KeywordValidationResult(['unevaluatedProperties'], [sub_result], f"Unevaluated property {key} is invalid"))
@@ -708,11 +822,31 @@ class ObjectPropertiesValidator(KeywordsValidator):
 
         return result
 
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        result = []
+        result += self.property_validators.values()
+        result += [i[2] for i in self.pattern_properties]
+        if self.additional_properties_validator:
+            result += [self.additional_properties_validator]
+        if self.unevaluated_properties_validator:
+            result += [self.unevaluated_properties_validator]
+        return result
+
+    def sub_pointers(self) -> List[List[str]]:
+        result = []
+        result += [['properties', i] for i in self.property_validators.keys()]
+        result += [['patternProperties', i[0]] for i in self.pattern_properties]
+        if self.additional_properties_validator:
+            result += ['additionalProperties']
+        if self.unevaluated_properties_validator:
+            result += ['unevaluatedProperties']
+        return result
+
 
 class ArrayContainsValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
         self.min_contains = self.parent._read_int('minContains', unparsed_keys, None)
         self.max_contains = self.parent._read_int('maxContains', unparsed_keys, None)
@@ -720,7 +854,7 @@ class ArrayContainsValidator(KeywordsValidator):
         if schema is None:
             self.contains_validator = None
         else:
-            self.contains_validator = _construct(schema, self.parent.pointer + 'contains', self.parent.globals)
+            self.contains_validator = _construct(schema, self.parent.pointer + 'contains', self.parent.globals, config)
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         if not isinstance(instance, list):
@@ -740,10 +874,14 @@ class ArrayContainsValidator(KeywordsValidator):
 
         result = []
         if self.min_contains is not None:
-            if num_matches < self.min_contains:
+            if num_matches >= self.min_contains:
+                result.append(KeywordValidationResult(['minContains'], sub_results))
+            else:
                 result.append(KeywordValidationResult(['minContains'], sub_results, 'Too few contains instances'))
         else:
-            if num_matches == 0:
+            if num_matches != 0:
+                result.append(KeywordValidationResult(['contains'], sub_results))
+            else:
                 result.append(KeywordValidationResult(['contains'], sub_results, 'Element is not found'))
 
         if self.max_contains is not None:
@@ -752,17 +890,36 @@ class ArrayContainsValidator(KeywordsValidator):
 
         return result
 
+    def sub_pointers(self) -> List[List[str]]:
+        result = []
+        if self.min_contains is not None:
+            result.append(['minContains'])
+        if self.max_contains is not None:
+            result.append(['maxContains'])
+        if self.contains_validator is not None:
+            result.append(['contains'])
+        return result
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        if self.contains_validator is not None:
+            return [self.contains_validator]
+        else:
+            return []
+
 
 class ArrayItemsValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.types = ALL_JSON_TYPES
-        items = self.parent._read_any('items', unparsed_keys, {})
-        self.items_validator = _construct(items, self.parent.pointer + 'items', self.parent.globals)
+        items = self.parent._read_any('items', unparsed_keys, None)
+        if items is None:
+            self.items_validator = None
+        else:
+            self.items_validator = _construct(items, self.parent.pointer + 'items', self.parent.globals, config)
         prefix_items = self.parent._read_list('prefixItems', unparsed_keys, [])
         self.prefix_items_validators = [
-            _construct(prefix_schema, self.parent.pointer + idx, self.parent.globals)
+            _construct(prefix_schema, self.parent.pointer + idx, self.parent.globals, config)
             for idx, prefix_schema in enumerate(prefix_items)
         ]
 
@@ -784,22 +941,37 @@ class ArrayItemsValidator(KeywordsValidator):
                     return result
 
         # Items
-        for idx, item in enumerate(instance[num_prefix_items:]):
-            item_result = self.items_validator._validate(item, config)
-            if item_result.ok:
-                result.append(KeywordValidationResult(['items']))
-            else:
-                result.append(KeywordValidationResult(['items'], [], f'item {idx} is invalid'))
-                if config.short_circuit_evaluation:
-                    return result
+        if self.items_validator:
+            for idx, item in enumerate(instance[num_prefix_items:]):
+                item_result = self.items_validator._validate(item, config)
+                if item_result.ok:
+                    result.append(KeywordValidationResult(['items']))
+                else:
+                    result.append(KeywordValidationResult(['items'], [], f'item {idx} is invalid'))
+                    if config.short_circuit_evaluation:
+                        return result
 
+        return result
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        result = []
+        if self.items_validator:
+            result.append(self.items_validator)
+        result.extend(self.prefix_items_validators)
+        return result
+
+    def sub_pointers(self) -> List[List[str]]:
+        result = []
+        result.extend(['prefixItems', idx] for idx, _ in enumerate(self.prefix_items_validators))
+        if self.items_validator:
+            result.append(['items'])
         return result
 
 
 class ArrayMinItemsValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.min_items = self.parent._read_float('minItems', unparsed_keys, 0)
         self.types = ALL_JSON_TYPES
 
@@ -810,11 +982,17 @@ class ArrayMinItemsValidator(KeywordsValidator):
             return [KeywordValidationResult(['minItems'], [], f"Array is shorter than {self.min_items}")]
         return [KeywordValidationResult(['minItems'])]
 
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [["minItems"]]
+
 
 class ArrayMaxItemsValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.max_items = self.parent._read_float('maxItems', unparsed_keys, 0)
         self.types = ALL_JSON_TYPES
 
@@ -825,11 +1003,17 @@ class ArrayMaxItemsValidator(KeywordsValidator):
             return [KeywordValidationResult(['maxItems'], [], f"Array is longer than {self.max_items}")]
         return [KeywordValidationResult(['maxItems'])]
 
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [['maxItems']]
+
 
 class TypeValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         type_names = self.parent._read_any('type', unparsed_keys)
         if isinstance(type_names, str):
             type_names = [type_names]
@@ -847,11 +1031,17 @@ class TypeValidator(KeywordsValidator):
         else:
             return [KeywordValidationResult(['type'])]
 
+    def sub_pointers(self) -> List[List[str]]:
+        return [['type']]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
+
 
 class EnumValidator(KeywordsValidator):
 
-    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str]):
-        super().__init__(parent, unparsed_keys)
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
         self.values = self.parent._read_list('enum', unparsed_keys, [])
         self.types = set()
         for value in self.values:
@@ -862,6 +1052,12 @@ class EnumValidator(KeywordsValidator):
             if values_are_equal(instance, i):
                 return [KeywordValidationResult(['enum'])]
         return [KeywordValidationResult(['enum'], [], f"Instance does not match any enum value")]
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [["enum"]]
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return []
 
 
 def _remove_if_exists(set: set, key: str):
@@ -877,6 +1073,7 @@ class SchemaValidator():
     def __init__(self, pointer: JsonPointer, globals: Globals) -> None:
         self.pointer = pointer
         self.globals = globals
+        self.types: JsonTypes
 
     def validate(self, instance: JsonValue, config: Optional[ValidationConfig] = None):
         if config is None:
@@ -944,9 +1141,9 @@ class DictSchemaValidator(SchemaValidator):
         'type': TypeValidator,
     }
 
-    def __init__(self, schema: JsonValue, pointer: JsonPointer, globals: Globals) -> None:
+    def __init__(self, schema: JsonValue, pointer: JsonPointer, globals: Globals, config: ParseConfig) -> None:
         super().__init__(pointer, globals)
-        self.validators: List[KeywordsValidator] = []
+        self.kw_validators: List[KeywordsValidator] = []
         self.schema = schema
         self.types: JsonTypes = ALL_JSON_TYPES.copy()
 
@@ -965,14 +1162,14 @@ class DictSchemaValidator(SchemaValidator):
         # Create all keyword validators
         while unparsed_keys:
             constructor = self._find_validator(schema, pointer, unparsed_keys)
-            kw_validator = constructor(self, unparsed_keys)
-            self.validators.append(kw_validator)
+            kw_validator = constructor(self, unparsed_keys, config)
+            self.kw_validators.append(kw_validator)
 
         # Collect types
-        for i in self.validators:
+        for i in self.kw_validators:
             self.types &= i.types
 
-    def _find_validator(self, schema: JsonValue, pointer: JsonPointer, unparsed_keys: Set[str]) -> Callable[[dict, JsonPointer, Globals, Set[str]], KeywordsValidator]:
+    def _find_validator(self, schema: JsonValue, pointer: JsonPointer, unparsed_keys: Set[str]) -> Callable[[dict, JsonPointer, Globals, Set[str], ParseConfig], KeywordsValidator]:
         for key, validator in self.validators_by_key.items():
             if key in unparsed_keys:
                 return validator
@@ -984,7 +1181,7 @@ class DictSchemaValidator(SchemaValidator):
             instance = config.preprocessor(instance, self)
 
         kw_results: List[KeywordValidationResult] = []
-        for i in self.validators:
+        for i in self.kw_validators:
             kw_results.extend(i.invoke(instance, config))
 
         return SchemaValidationResult(self, kw_results)
@@ -1052,7 +1249,10 @@ class NothingValidator(SchemaValidator):
         return result
 
 
-def parse_schema(schema: JsonValue) -> SchemaValidator:
+def parse_schema(schema: JsonValue, config: Optional[ParseConfig] = None) -> SchemaValidator:
+    if config is None:
+        config = ParseConfig()
+
     if isinstance(schema, dict):
         actual_schema = schema.get('$schema')
         expected_schema = "https://json-schema.org/draft/2020-12/schema"
@@ -1065,15 +1265,15 @@ def parse_schema(schema: JsonValue) -> SchemaValidator:
     else:
         clean_schema = schema
 
-    return _construct(clean_schema, JsonPointer(), Globals(schema))
+    return _construct(clean_schema, JsonPointer(), Globals(schema), config)
 
 
-def _construct(schema: JsonValue, pointer: JsonPointer, globals: Globals) -> SchemaValidator:
+def _construct(schema: JsonValue, pointer: JsonPointer, globals: Globals, config: ParseConfig) -> SchemaValidator:
     if schema is False:
         return NothingValidator(pointer, globals)
     elif schema is True:
         return AnyValidator(pointer, globals)
     elif isinstance(schema, dict):
-        return DictSchemaValidator(schema, pointer, globals)
+        return DictSchemaValidator(schema, pointer, globals, config)
     else:
         raise InvalidSchemaException(f"Schema must be a bool or dict, got {type(schema)}")
