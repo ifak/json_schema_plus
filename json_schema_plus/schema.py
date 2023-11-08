@@ -26,6 +26,7 @@ class ParseConfig:
 
     format_validators: Dict[str, Callable[[str], bool]] = field(default_factory=dict)
     raise_on_unknown_format: bool = True
+    raise_on_unknown_keyword: bool = False
 
 
 class KeywordValidationResult:
@@ -114,6 +115,7 @@ class NotValidator(KeywordsValidator):
 
     def sub_pointers(self) -> List[List[str]]:
         return [["not"]]
+
 
 class IfThenElseValidator(KeywordsValidator):
 
@@ -1090,56 +1092,47 @@ class DictSchemaValidator(SchemaValidator):
     An instance is accepted iff all keyword validators of the schema accept the instance.
     """
 
-    validators_by_key = {
-        'not': NotValidator,
-        'if': IfThenElseValidator,
-        'then': IfThenElseValidator,
-        'else': IfThenElseValidator,
-
-        'allOf': AllOfValidator,
-        'anyOf': AnyOfValidator,
-        'oneOf': OneOfValidator,
-
-        '$ref': ReferenceValidator,
-
-        'prefixItems': ArrayItemsValidator,
-        'items': ArrayItemsValidator,
-        'minItems': ArrayMinItemsValidator,
-        'maxItems': ArrayMaxItemsValidator,
-        'minContains': ArrayContainsValidator,
-        'maxContains': ArrayContainsValidator,
-        'contains': ArrayContainsValidator,
-
-        'const': ConstValidator,
-
-        'pattern': StringPatternValidator,
-        'minLength': StringMinLengthValidator,
-        'maxLength': StringMaxLengthValidator,
-        "format": StringFormatValidator,
-        "contentEncoding": StringContentValidator,
-        "contentMediaType": StringContentValidator,
-        "contentSchema": StringContentValidator,
-
-        "minimum": NumberMinimumValidator,
-        "maximum": NumberMaximumValidator,
-        "exclusiveMinimum": NumberExclusiveMinimumValidator,
-        "exclusiveMaximum": NumberExclusiveMaximumValidator,
-        "multipleOf": NumberMultipleOfValidator,
-
-        'propertyNames': ObjectPropertyNamesValidator,
-        'properties': ObjectPropertiesValidator,
-        'patternProperties': ObjectPropertiesValidator,
-        'additionalProperties': ObjectPropertiesValidator,
-        'unevaluatedProperties': ObjectPropertiesValidator,
-        'required': ObjectRequiredValidator,
-        'dependentRequired': ObjectDependentRequiredValidator,
-        'minProperties': ObjectMinPropertiesValidator,
-        'maxProperties': ObjectMaxPropertiesValidator,
-
-        'enum': EnumValidator,
-
-        'type': TypeValidator,
-    }
+    validators_by_key = [
+        ('not', NotValidator),
+        ('if', IfThenElseValidator),
+        ('then', IfThenElseValidator),
+        ('else', IfThenElseValidator),
+        ('allOf', AllOfValidator),
+        ('anyOf', AnyOfValidator),
+        ('oneOf', OneOfValidator),
+        ('$ref', ReferenceValidator),
+        ('prefixItems', ArrayItemsValidator),
+        ('items', ArrayItemsValidator),
+        ('minItems', ArrayMinItemsValidator),
+        ('maxItems', ArrayMaxItemsValidator),
+        ('minContains', ArrayContainsValidator),
+        ('maxContains', ArrayContainsValidator),
+        ('contains', ArrayContainsValidator),
+        ('const', ConstValidator),
+        ('pattern', StringPatternValidator),
+        ('minLength', StringMinLengthValidator),
+        ('maxLength', StringMaxLengthValidator),
+        ("format", StringFormatValidator),
+        ("contentEncoding", StringContentValidator),
+        ("contentMediaType", StringContentValidator),
+        ("contentSchema", StringContentValidator),
+        ("minimum", NumberMinimumValidator),
+        ("maximum", NumberMaximumValidator),
+        ("exclusiveMinimum", NumberExclusiveMinimumValidator),
+        ("exclusiveMaximum", NumberExclusiveMaximumValidator),
+        ("multipleOf", NumberMultipleOfValidator),
+        ('propertyNames', ObjectPropertyNamesValidator),
+        ('properties', ObjectPropertiesValidator),
+        ('patternProperties', ObjectPropertiesValidator),
+        ('additionalProperties', ObjectPropertiesValidator),
+        ('unevaluatedProperties', ObjectPropertiesValidator),
+        ('required', ObjectRequiredValidator),
+        ('dependentRequired', ObjectDependentRequiredValidator),
+        ('minProperties', ObjectMinPropertiesValidator),
+        ('maxProperties', ObjectMaxPropertiesValidator),
+        ('enum', EnumValidator),
+        ('type', TypeValidator),
+    ]
 
     def __init__(self, schema: JsonValue, pointer: JsonPointer, globals: Globals, config: ParseConfig) -> None:
         super().__init__(pointer, globals)
@@ -1151,30 +1144,22 @@ class DictSchemaValidator(SchemaValidator):
             raise InvalidSchemaException(f"Duplicate pointer {pointer}", pointer)
         self.globals.validators_by_pointer[str(pointer)] = self
 
-        if isinstance(schema, dict):
-            unparsed_keys = set(schema.keys())
-            _remove_if_exists(unparsed_keys, 'deprecated')
-            _remove_if_exists(unparsed_keys, '$comment')
-            _remove_if_exists(unparsed_keys, 'default')
-        else:
-            unparsed_keys = set()
+        unparsed_keys = set(schema.keys())
+        _remove_if_exists(unparsed_keys, 'deprecated')
+        _remove_if_exists(unparsed_keys, '$comment')
+        _remove_if_exists(unparsed_keys, 'default')
 
         # Create all keyword validators
-        while unparsed_keys:
-            constructor = self._find_validator(schema, pointer, unparsed_keys)
-            kw_validator = constructor(self, unparsed_keys, config)
-            self.kw_validators.append(kw_validator)
+        for key, validator in self.validators_by_key:
+            if key in unparsed_keys:
+                kw_validator = validator(self, unparsed_keys, config)
+                self.kw_validators.append(kw_validator)
+        if unparsed_keys and config.raise_on_unknown_keyword:
+            raise InvalidSchemaException(f"Unknown keys {list(schema.keys())}", pointer)
 
         # Collect types
         for i in self.kw_validators:
             self.types &= i.types
-
-    def _find_validator(self, schema: JsonValue, pointer: JsonPointer, unparsed_keys: Set[str]) -> Callable[[dict, JsonPointer, Globals, Set[str], ParseConfig], KeywordsValidator]:
-        for key, validator in self.validators_by_key.items():
-            if key in unparsed_keys:
-                return validator
-
-        raise InvalidSchemaException(f"Unknown keys {list(schema.keys())}", pointer)
 
     def _validate(self, instance: JsonValue, config: ValidationConfig) -> SchemaValidationResult:
         if config.preprocessor:

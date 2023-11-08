@@ -40,7 +40,7 @@ class SchemaTestSuite(TestCase):
             "required with empty array"
         ]
         root = os.path.join(script_dir, 'JSON-Schema-Test-Suite/tests/draft2020-12')
-        output = True
+        output = False
         for file in sorted(os.listdir(root)):
             if output:
                 print(file)
@@ -76,4 +76,3 @@ class SchemaTestSuite(TestCase):
                     if test_suite['description'] in cov_blacklist:
                         continue
                     self.assertGreater(cov.coverage(), .0)
-                    print(cov.coverage())
