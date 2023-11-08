@@ -3,9 +3,7 @@
 JSON Schema Plus is a python implementation of JSON Schema, draft 2020-12.
 It offers various additional features commonly not found in other libraries
 
-## Validation of JSON documents
-
-The core of JSON Schema Plus is the validation of JSON documents, obviously.
+Obviously, the core of JSON Schema Plus is the validation of JSON documents.
 This can be done as follows:
 
 ```python
@@ -31,10 +29,7 @@ result = validator.validate("invalid")
 
 ```
 
-## Type inference
-TBD
-
-## Schema coverage measurement
+## Schema Coverage Measurement
 You can use coverage to assess the completeness of your test data.
 Schema coverage works on the keyword level, i.e., JsconSchemaPlus checks, how many constraints have been actually checked during instance validation:
 
@@ -66,3 +61,24 @@ print(cov.coverage())
 with open("schema-coverage.html", "w") as f:
     cov.render_coverage(f)
 ```
+
+## Type Inference
+Given a validator, you can use it to query the types of the schema.
+This even works for complex and composed schemas:
+```python
+from json_schema_plus import parse_schema
+schema = {
+    '$schema': 'https://json-schema.org/draft/2020-12/schema',
+    'anyOf': [
+        {"type": "object"},
+        {"const": "foo"}
+    ]
+}
+validator = parse_schema(schema)
+print(validator.get_types())
+# {'object', 'string'}
+```
+
+## Validation Performance
+TBD
+

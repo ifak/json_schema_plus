@@ -54,7 +54,7 @@ class SchemaTestSuite(TestCase):
                 if output:
                     print(test_suite['description'])
                 validator = parse_schema(test_suite['schema'])
-                self.assertIsNotNone(validator.types)
+                self.assertIsNotNone(validator.get_types())
 
                 try:
                     cov = coverage.SchemaCoverage(validator)
