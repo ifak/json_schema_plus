@@ -1,5 +1,5 @@
-from json_schema_plus.pointer import JsonPointer
-from json_schema_plus.exception import JsonSchemaPlusException
+from json_schema_tool.pointer import JsonPointer
+from json_schema_tool.exception import JsonSchemaPlusException
 
 from unittest import TestCase
 

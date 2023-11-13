@@ -1,6 +1,6 @@
-from json_schema_plus.types import from_instance, JsonType, values_are_equal, from_typename, ALL_JSON_TYPES
+from json_schema_tool.types import from_instance, JsonType, values_are_equal, from_typename, ALL_JSON_TYPES
 from unittest import TestCase
-from json_schema_plus.exception import TypeException
+from json_schema_tool.exception import TypeException
 
 class FromInstanceTest(TestCase):
 

@@ -1,6 +1,6 @@
 # JSON Schema Plus
 
-[![Tests](https://github.com/ifak/json_schema_plus/actions/workflows/check.yml/badge.svg)](https://github.com/ifak/json_schema_plus/actions/workflows/check.yml)
+[![Tests](https://github.com/ifak/json_schema_tool/actions/workflows/check.yml/badge.svg)](https://github.com/ifak/json_schema_tool/actions/workflows/check.yml)
 
 JSON Schema Plus is a python implementation of JSON Schema, draft 2020-12.
 It offers various additional features commonly not found in other libraries
@@ -9,7 +9,7 @@ Obviously, the core of JSON Schema Plus is the validation of JSON documents.
 This can be done as follows:
 
 ```python
-from json_schema_plus import parse_schema
+from json_schema_tool import parse_schema
 
 schema = {
     '$schema': 'https://json-schema.org/draft/2020-12/schema',
@@ -36,7 +36,7 @@ You can use coverage to assess the completeness of your test data.
 Schema coverage works on the keyword level, i.e., JsconSchemaPlus checks, how many constraints have been actually checked during instance validation:
 
 ```python
-from json_schema_plus import coverage, parse_schema
+from json_schema_tool import coverage, parse_schema
 schema = {
     '$schema': 'https://json-schema.org/draft/2020-12/schema',
     'type': 'object',
@@ -68,7 +68,7 @@ with open("schema-coverage.html", "w") as f:
 Given a validator, you can use it to query the types of the schema.
 This even works for complex and composed schemas:
 ```python
-from json_schema_plus import parse_schema
+from json_schema_tool import parse_schema
 schema = {
     '$schema': 'https://json-schema.org/draft/2020-12/schema',
     'anyOf': [
@@ -88,7 +88,7 @@ For example, an allOf does not visit all sub schemas, if the first sub-schema al
 You can activate SCE as follows:
 
 ```python
-from json_schema_plus import schema
+from json_schema_tool import schema
 
 # use parse_schema to build your validator...
 

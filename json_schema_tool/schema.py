@@ -1,4 +1,4 @@
-from json_schema_plus.types import JsonType, JsonValue
+from json_schema_tool.types import JsonType, JsonValue
 from .types import from_typename, JsonType, from_instance, values_are_equal, JsonTypes, ALL_JSON_TYPES
 from .pointer import JsonPointer
 

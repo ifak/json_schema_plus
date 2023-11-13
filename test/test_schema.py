@@ -3,7 +3,7 @@ import json
 
 from unittest import TestCase
 
-from json_schema_plus import parse_schema, coverage, exception, schema
+from json_schema_tool import parse_schema, coverage, exception, schema
 
 
 script_dir = os.path.dirname(os.path.realpath(__file__))

@@ -1,4 +1,4 @@
-from json_schema_plus import coverage, parse_schema
+from json_schema_tool import coverage, parse_schema
 from unittest import TestCase
 
 
