@@ -1,0 +1,23 @@
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "json_schema_plus"
+version = "__VERSION__"
+description = "JSON Schema validation with various additional features"
+readme = "README.md"
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["python", "json", "json-schema"]
+requires-python = ">=3.6"
+
+[project.urls]
+Homepage = "https://github.com/ifak/json_schema_plus"
+
+[project.scripts]
+realpython = "reader.__main__:main"
