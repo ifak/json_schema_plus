@@ -16,3 +16,7 @@ class JsonPointerException(JsonSchemaPlusException):
 
 class CoverageException(JsonSchemaPlusException):
     pass
+
+
+class PreprocessorException(JsonSchemaPlusException):
+    pass

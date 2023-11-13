@@ -3,7 +3,7 @@ from .types import from_typename, JsonType, from_instance, values_are_equal, Jso
 from .pointer import JsonPointer
 
 from typing import Dict, List, Optional, Set, Callable, Pattern, Tuple
-from .exception import InvalidSchemaException, TypeException, JsonPointerException
+from .exception import InvalidSchemaException, TypeException, JsonPointerException, PreprocessorException
 
 import re
 from dataclasses import dataclass, field
@@ -1224,7 +1224,10 @@ class DictSchemaValidator(SchemaValidator):
 
     def _validate(self, instance: JsonValue, config: ValidationConfig) -> SchemaValidationResult:
         if config.preprocessor:
-            instance = config.preprocessor(instance, self)
+            try:
+                instance = config.preprocessor(instance, self)
+            except PreprocessorException as e:
+                return SchemaValidationResult(self, [KeywordValidationResult([], [], str(e))])
 
         kw_results: List[KeywordValidationResult] = []
         for i in self.kw_validators:
