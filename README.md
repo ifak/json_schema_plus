@@ -31,6 +31,14 @@ result = validator.validate("invalid")
 
 ```
 
+## Installation
+
+You can install JSON Schema Tool via pip:
+
+```sh
+python -m pip install json_schema_tool
+```
+
 ## Schema Coverage Measurement
 You can use coverage to assess the completeness of your test data.
 Schema coverage works on the keyword level, i.e., JsonSchema Tool checks, how many constraints have been actually checked during instance validation:
