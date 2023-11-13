@@ -1,22 +1,22 @@
-class JsonSchemaPlusException(Exception):
+class JsonSchemaToolException(Exception):
     pass
 
 
-class TypeException(JsonSchemaPlusException):
+class TypeException(JsonSchemaToolException):
     pass
 
 
-class InvalidSchemaException(JsonSchemaPlusException):
+class InvalidSchemaException(JsonSchemaToolException):
     pass
 
 
-class JsonPointerException(JsonSchemaPlusException):
+class JsonPointerException(JsonSchemaToolException):
     pass
 
 
-class CoverageException(JsonSchemaPlusException):
+class CoverageException(JsonSchemaToolException):
     pass
 
 
-class PreprocessorException(JsonSchemaPlusException):
+class PreprocessorException(JsonSchemaToolException):
     pass

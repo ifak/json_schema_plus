@@ -1,5 +1,5 @@
 from json_schema_tool.pointer import JsonPointer
-from json_schema_tool.exception import JsonSchemaPlusException
+from json_schema_tool.exception import JsonSchemaToolException
 
 from unittest import TestCase
 
@@ -13,5 +13,5 @@ class TestPointer(TestCase):
         self.assertEqual(str(p), '#/12')
         p += 'hello'
         self.assertEqual(str(p), '#/12/hello')
-        with self.assertRaises(JsonSchemaPlusException):
+        with self.assertRaises(JsonSchemaToolException):
             p += None

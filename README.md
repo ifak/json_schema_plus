@@ -1,11 +1,11 @@
-# JSON Schema Plus
+# JSON Schema Tool
 
 [![Tests](https://github.com/ifak/json_schema_tool/actions/workflows/check.yml/badge.svg)](https://github.com/ifak/json_schema_tool/actions/workflows/check.yml)
 
-JSON Schema Plus is a python implementation of JSON Schema, draft 2020-12.
+JSON Schema Tool is a python implementation of JSON Schema, draft 2020-12.
 It offers various additional features commonly not found in other libraries
 
-Obviously, the core of JSON Schema Plus is the validation of JSON documents.
+Obviously, the core of JSON Schema Tool is the validation of JSON documents.
 This can be done as follows:
 
 ```python
@@ -33,7 +33,7 @@ result = validator.validate("invalid")
 
 ## Schema Coverage Measurement
 You can use coverage to assess the completeness of your test data.
-Schema coverage works on the keyword level, i.e., JsconSchemaPlus checks, how many constraints have been actually checked during instance validation:
+Schema coverage works on the keyword level, i.e., JsonSchema Tool checks, how many constraints have been actually checked during instance validation:
 
 ```python
 from json_schema_tool import coverage, parse_schema
