@@ -1,5 +1,7 @@
 # JSON Schema Plus
 
+[![Tests](https://github.com/ifak/json_schema_plus/actions/workflows/check.yml/badge.svg)](https://github.com/ifak/json_schema_plus/actions/workflows/check.yml)
+
 JSON Schema Plus is a python implementation of JSON Schema, draft 2020-12.
 It offers various additional features commonly not found in other libraries
 
