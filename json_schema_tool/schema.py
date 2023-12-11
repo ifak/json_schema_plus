@@ -18,6 +18,7 @@ class ValidationConfig:
     preprocessor: Optional[Callable] = None
     short_circuit_evaluation: bool = False
     strict_content_encoding = False
+    raise_on_unknown_keyword = False
 
 
 @dataclass
