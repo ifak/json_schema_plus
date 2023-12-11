@@ -1,5 +1,4 @@
-from json_schema_tool.types import JsonType, JsonValue
-from .types import from_typename, JsonType, from_instance, values_are_equal, JsonTypes, ALL_JSON_TYPES
+from .types import from_typename, JsonValue, from_instance, values_are_equal, JsonTypes, ALL_JSON_TYPES
 from .pointer import JsonPointer
 
 from typing import Dict, List, Optional, Set, Callable, Pattern, Tuple
