@@ -4,6 +4,17 @@ from unittest import TestCase
 
 class CoverageTest(TestCase):
 
+    def test_recursion(self):
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'type': 'array',
+            'items': {
+                "$ref": "#"
+            }
+        }
+        validator = parse_schema(schema)
+        coverage.SchemaCoverage(validator)
+
     def test_object(self):
         schema = {
             '$schema': 'https://json-schema.org/draft/2020-12/schema',

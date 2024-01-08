@@ -12,14 +12,18 @@ class KwValidatorCoverage:
         self.num_invalid = 0
 
 
-def _collect(validator: SchemaValidator, kw_validators: Dict[str, KeywordsValidator]):
+def _collect(validator: SchemaValidator, kw_validators: Dict[str, KeywordsValidator], visited: set):
+    if id(validator) in visited:
+        return
+    visited.add(id(validator))
+
     if isinstance(validator, DictSchemaValidator):
         for kw_validator in validator.kw_validators:
             for sub_pointer in kw_validator.sub_pointers():
                 pointer = validator.pointer + sub_pointer
                 kw_validators[str(pointer)] = KwValidatorCoverage()
             for sub_schema in kw_validator.sub_schemas():
-                _collect(sub_schema, kw_validators)
+                _collect(sub_schema, kw_validators, visited)
 
 
 class SchemaCoverage:
@@ -27,7 +31,8 @@ class SchemaCoverage:
     def __init__(self, validator: SchemaValidator) -> None:
         self.validator = validator
         self.kw_validators: Dict[str, KwValidatorCoverage] = {}
-        _collect(validator, self.kw_validators)
+        visited = set()
+        _collect(validator, self.kw_validators, visited)
         if not self.kw_validators:
             raise CoverageException("Cannot measure coverage: schema has no keywords")
 
