@@ -1006,7 +1006,7 @@ class ArrayItemsValidator(KeywordsValidator):
                 if item_result.ok:
                     result.append(KeywordValidationResult(['items']))
                 else:
-                    result.append(KeywordValidationResult(['items'], [], f'item {idx} is invalid'))
+                    result.append(KeywordValidationResult(['items'], [item_result], f'item {idx} is invalid'))
                     if config.short_circuit_evaluation:
                         return result
 
