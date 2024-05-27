@@ -9,6 +9,19 @@ from json_schema_tool import parse_schema, coverage, exception, schema
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
 
+class TestParse(TestCase):
+
+    def test_invalid_type(self):
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema([])
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(None)
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(12)
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema({'anyOf': [12]})
+
+
 class SchemaTestSuite(TestCase):
 
     blacklist = [
@@ -28,7 +41,6 @@ class SchemaTestSuite(TestCase):
         'dependentSchemas.json',
         'not.json',
     ]
-
 
     def test_all(self):
 

@@ -1334,4 +1334,4 @@ def _construct(schema: JsonValue, pointer: JsonPointer, globals: Globals, config
     elif isinstance(schema, dict):
         return DictSchemaValidator(schema, pointer, globals, config)
     else:
-        raise InvalidSchemaException(f"Schema must be a bool or dict, got {type(schema)}")
+        raise InvalidSchemaException(f"Schema must be a bool or dict, got {type(schema)} at {pointer}")
