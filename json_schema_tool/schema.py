@@ -1,4 +1,4 @@
-from .types import from_typename, JsonValue, from_instance, values_are_equal, JsonTypes, ALL_JSON_TYPES
+from .types import from_typename, JsonValue, from_instance, values_are_equal, JsonTypes, ALL_JSON_TYPES, JsonType
 from .pointer import JsonPointer
 from typing import Dict, List, Optional, Set, Callable, Pattern, Tuple
 from .exception import InvalidSchemaException, TypeException, JsonPointerException, PreprocessorException
@@ -193,6 +193,81 @@ class IfThenElseValidator(KeywordsValidator):
             if self.else_validator:
                 self._types |= self.else_validator.get_types()
         return self._types
+
+
+class DiscriminatorValidator(KeywordsValidator):
+    def __init__(self, parent: "DictSchemaValidator", unparsed_keys: Set[str], config: ParseConfig):
+        super().__init__(parent, unparsed_keys, config)
+        data = parent._read_dict('discriminator', unparsed_keys)
+        self.property_name = data.get('propertyName')
+        if not isinstance(self.property_name, str):
+            raise InvalidSchemaException(f"propertyName must be a string, got {self.property_name} at {parent.pointer}")
+        _remove_if_exists(unparsed_keys, 'anyOf')
+        _remove_if_exists(unparsed_keys, 'oneOf')
+        self.mapping: Dict[str, "ReferenceValidator"] = {}
+        self._collect_refs(False, self.parent.schema, self.parent.pointer, self.mapping, config)
+
+    def _collect_refs(self, is_child: bool, schema: dict, pointer: JsonPointer, refs: Dict[str, "ReferenceValidator"], config: ParseConfig):
+        aggregators = []
+        for key in ['anyOf', 'oneOf']:
+            try:
+                aggregators.append((key, schema[key]))
+            except KeyError:
+                pass
+        if len(aggregators) != 1:
+            if is_child:
+                return
+            else:
+                raise InvalidSchemaException("discriminator requires either anyOf or oneOf")
+        keyword, entries = aggregators[0]
+        if not isinstance(entries, list):
+            raise InvalidSchemaException("Entries must be a list")
+        for idx, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise InvalidSchemaException(f"Entry {idx} is invalid")
+            if len(entry.keys()) != 1:
+                if is_child:
+                    continue
+                else:
+                    raise InvalidSchemaException(f"Entry {idx} must contain exactly one key: $ref")
+            key, value = next(iter(entry.items()))
+            if key == '$ref':
+                sub_pointer = pointer + keyword + idx
+                # TODO: construct ReferenceValidator directly?
+                validator = _construct(entry, sub_pointer, self.parent.globals, config)
+                assert isinstance(validator, DictSchemaValidator)
+                assert len(validator.kw_validators) == 1
+                ref_validator = validator.kw_validators[0]
+                assert isinstance(ref_validator, ReferenceValidator)
+                refs[value] = ref_validator
+                self._collect_refs(True, ref_validator.ref_validator.schema, sub_pointer, refs, config)
+            else:
+                raise InvalidSchemaException(f"Entry {idx}: expected $ref, oneOf or anyOf, got {value}")
+
+    def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
+        if not isinstance(instance, dict):
+            return [KeywordValidationResult(['discriminator'], [], 'Expected an object')]
+        try:
+            property_value = instance[self.property_name]
+        except KeyError:
+            return [KeywordValidationResult(['discriminator'], [], f"Property '{self.property_name}' is missing")]
+        if not isinstance(property_value, str):
+            return [KeywordValidationResult(['discriminator'], [], f"Property '{self.property_name}' must be a string")]
+
+        property_value = '/' + property_value  # to avoid conflicts with duplicate suffixes
+        for key, validator in self.mapping.items():
+            if key.endswith(property_value):
+                return validator.invoke(instance, config)
+        return [KeywordValidationResult(['discriminator'], [], f"Property '{self.property_name}' has invalid value '{property_value}'")]
+
+    def get_types(self) -> JsonTypes:
+        return set([JsonType.OBJECT])
+
+    def sub_pointers(self) -> List[List[str]]:
+        return [[]] # TODO
+
+    def sub_schemas(self) -> List["SchemaValidator"]:
+        return [[]] # TODO
 
 
 class AggregatingValidator(KeywordsValidator):
@@ -1161,6 +1236,7 @@ class DictSchemaValidator(SchemaValidator):
         ('then', IfThenElseValidator),
         ('else', IfThenElseValidator),
         ('allOf', AllOfValidator),
+        ('discriminator', DiscriminatorValidator),  # overwrites anyOf / oneOf
         ('anyOf', AnyOfValidator),
         ('oneOf', OneOfValidator),
         ('$ref', ReferenceValidator),

@@ -22,6 +22,233 @@ class TestParse(TestCase):
             parse_schema({'anyOf': [12]})
 
 
+class TestDiscriminator(TestCase):
+
+    def test_invalid_schema(self):
+        # not an object
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'discriminator': False
+        }
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(schema)
+
+        # missing propertyName
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'discriminator': {}
+        }
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(schema)
+
+        # propertyName not a string
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'discriminator': {
+                'propertyName': False
+            }
+        }
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(schema)
+
+        # missing anyOf / oneOf
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(schema)
+
+        # cannot have anyOf and oneOf
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'anyOf': [{}],
+            'oneOf': [{}],
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(schema)
+
+        # All entries need to be references
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'anyOf': [
+                {'type': 'string'}
+            ],
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+        with self.assertRaises(exception.InvalidSchemaException):
+            parse_schema(schema)
+
+        # OK
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'anyOf': [{'$ref': '#/$defs/Test'}],
+            'discriminator': {
+                'propertyName': 'type'
+            },
+            '$defs': {
+                'Test': {}
+            }
+        }
+        parse_schema(schema)
+
+    def test_invalid_discriminator_value(self):
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'oneOf': [
+                {'$ref': '#/$defs/Dog'},
+            ],
+            '$defs': {
+                'Dog': {
+                    'properties': {'sound': {'const': 'woof'}}
+                }
+            },
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+        validator = parse_schema(schema)
+        result = validator.validate({})
+        self.assertFalse(result.ok)
+        result = validator.validate({'type': False})
+        self.assertFalse(result.ok)
+
+    def test_simple(self):
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'oneOf': [
+                {'$ref': '#/$defs/Cat'},
+                {'$ref': '#/$defs/Dog'},
+            ],
+            '$defs': {
+                'Cat': {
+                    'properties': {'sound': {'const': 'meow'}}
+                },
+                'Dog': {
+                    'properties': {'sound': {'const': 'woof'}}
+                }
+            },
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+
+        validator = parse_schema(schema)
+
+        result = validator.validate({
+            'type': 'Cat',
+            'sound': 'meow',
+        })
+        self.assertEqual(result.ok, True)
+
+        result = validator.validate({
+            'type': 'Dog',
+            'sound': 'woof',
+        })
+        self.assertEqual(result.ok, True)
+
+        result = validator.validate({
+            'type': 'Dog',
+            'sound': 'meow',
+        })
+        self.assertEqual(result.ok, False)
+
+        result = validator.validate({
+            'type': 'Sheep',  # does not exist
+            'sound': 'meow',
+        })
+        self.assertEqual(result.ok, False)
+
+    def test_multiple_inheritance(self):
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            '$defs': {
+                'Animal': {
+                    'oneOf': [
+                        {'$ref': '#/$defs/Cat'},
+                        {'$ref': '#/$defs/Dog'},
+                    ]
+                },
+                'Cat': {
+                    'properties': {'sound': {'const': 'meow'}}
+                },
+                'Dog': {
+                    'properties': {'sound': {'const': 'woof'}}
+                },
+                'Human': {
+                    'oneOf': [
+                        {'$ref': '#/$defs/Child'},
+                        {'$ref': '#/$defs/Adult'},
+                    ]
+                },
+                'Child': {
+                    'properties': {'sound': {'const': 'hi'}}
+                },
+                'Adult': {
+                    'properties': {'sound': {'const': 'welcome'}}
+                },
+            },
+            'oneOf': [
+                {'$ref': '#/$defs/Animal'},
+                {'$ref': '#/$defs/Human'},
+            ],
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+        validator = parse_schema(schema)
+
+        # invalid type
+        result = validator.validate({'type': 'Foo'})
+        self.assertFalse(result.ok)
+
+        # invalid property value
+        result = validator.validate({'type': 'Child', 'sound': 'welcome'})
+        self.assertFalse(result.ok)
+
+        # Ok
+        result = validator.validate({'type': 'Child', 'sound': 'hi'})
+        self.assertTrue(result.ok)
+
+    def test_duplicate_suffix(self):
+        schema = {
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'oneOf': [
+                {'$ref': '#/$defs/CatCat'},
+                {'$ref': '#/$defs/Cat'},
+            ],
+            '$defs': {
+                'Cat': {
+                    'properties': {'sound': {'const': 'meow'}}
+                },
+                'CatCat': {
+                    'properties': {'sound': {'const': 'meow-meow'}}
+                }
+            },
+            'discriminator': {
+                'propertyName': 'type'
+            }
+        }
+
+        validator = parse_schema(schema)
+
+        result = validator.validate({'type': 'Cat', 'sound': 'meow'})
+        self.assertTrue(result.ok)
+        result = validator.validate({'type': 'CatCat', 'sound': 'meow'})
+        self.assertFalse(result.ok)
+        result = validator.validate({'type': 'Cat', 'sound': 'meow-meow'})
+        self.assertFalse(result.ok)
+        result = validator.validate({'type': 'CatCat', 'sound': 'meow-meow'})
+        self.assertTrue(result.ok)
+
+
 class SchemaTestSuite(TestCase):
 
     blacklist = [
