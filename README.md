@@ -39,7 +39,39 @@ You can install JSON Schema Tool via pip:
 python -m pip install json_schema_tool
 ```
 
-## Schema Coverage Measurement
+## Features
+
+### Additional Keywords
+
+Json Schema Tool supports OpenAPI's `discriminator` keyword for improved modelling of polymorphism:
+
+```python
+schema = {
+    '$schema': 'https://json-schema.org/draft/2020-12/schema',
+    'oneOf': [
+        {'$ref': '#/$defs/Cat'},
+        {'$ref': '#/$defs/Dog'},
+    ],
+    '$defs': {
+        'Cat': {
+            'properties': {'sound': {'const': 'meow'}}
+        },
+        'Dog': {
+            'properties': {'sound': {'const': 'woof'}}
+        }
+    },
+    'discriminator': {
+        'propertyName': 'type'
+    }
+}
+result = validator.validate({'type': 'Cat', 'sound': '?'})
+# result.ok == False
+```
+
+Using the discriminator `type`, Json Schema Tool knows which reference to check and will only return an error for the `Cat` type (and will not check `Dog`).
+For more information, see https://swagger.io/docs/specification/data-models/inheritance-and-polymorphism/.
+
+### Schema Coverage Measurement
 You can use coverage to assess the completeness of your test data.
 Schema coverage works on the keyword level, i.e., JsonSchema Tool checks, how many constraints have been actually checked during instance validation:
 
@@ -72,7 +104,7 @@ with open("schema-coverage.html", "w") as f:
     cov.render_coverage(f)
 ```
 
-## Type Inference
+### Type Inference
 Given a validator, you can use it to query the types of the schema.
 This even works for complex and composed schemas:
 ```python
@@ -89,7 +121,7 @@ print(validator.get_types())
 # {'object', 'string'}
 ```
 
-## Validation Performance
+### Validation Performance
 You can drastically increase validation performance by using short circuit evaluation (SCE).
 By using SCE, evaluation terminates as soon as the first error in the JSON instance is found.
 For example, an allOf does not visit all sub schemas, if the first sub-schema already fails.
