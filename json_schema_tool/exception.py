@@ -20,3 +20,7 @@ class CoverageException(JsonSchemaToolException):
 
 class PreprocessorException(JsonSchemaToolException):
     pass
+
+
+class PostProcessorException(JsonSchemaToolException):
+    pass

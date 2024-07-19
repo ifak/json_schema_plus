@@ -1,7 +1,7 @@
 from .types import from_typename, JsonValue, from_instance, values_are_equal, JsonTypes, ALL_JSON_TYPES, JsonType
 from .pointer import JsonPointer
 from typing import Dict, List, Optional, Set, Callable, Pattern, Tuple
-from .exception import InvalidSchemaException, TypeException, JsonPointerException, PreprocessorException
+from .exception import InvalidSchemaException, TypeException, JsonPointerException, PreprocessorException, PostProcessorException
 
 import re
 from dataclasses import dataclass, field
@@ -15,6 +15,7 @@ import base64
 class ValidationConfig:
 
     preprocessor: Optional[Callable] = None
+    postprocessor: Optional[Callable] = None
     short_circuit_evaluation: bool = False
     strict_content_encoding = False
 
@@ -252,7 +253,7 @@ class DiscriminatorValidator(KeywordsValidator):
         except KeyError:
             return [KeywordValidationResult(['discriminator'], [], f"Property '{self.property_name}' is missing")]
         if not isinstance(property_value, str):
-            return [KeywordValidationResult(['discriminator'], [], f"Property '{self.property_name}' must be a string")]
+            return [KeywordValidationResult(['discriminator'], [], f"Property '{self.property_name}' must be a string, got {property_value}")]
 
         property_value = '/' + property_value  # to avoid conflicts with duplicate suffixes
         for key, validator in self.mapping.items():
@@ -313,8 +314,8 @@ class AllOfValidator(AggregatingValidator):
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         sub_results: List[SchemaValidationResult] = []
         ok = True
-        for validators in self.sub_validators:
-            result = validators._validate(instance, config)
+        for validator in self.sub_validators:
+            result = validator._validate(instance, config)
             if not result.ok:
                 ok = False
                 if config.short_circuit_evaluation:
@@ -1154,7 +1155,7 @@ class TypeValidator(KeywordsValidator):
             for i in type_names:
                 self._types = self._types.union(from_typename(i))
         except TypeException as e:
-            raise InvalidSchemaException(str(e), self.pointer)
+            raise InvalidSchemaException(str(e), self.parent.pointer)
 
     def invoke(self, instance: JsonValue, config: ValidationConfig) -> List[KeywordValidationResult]:
         instance_types = from_instance(instance)
@@ -1310,7 +1311,14 @@ class DictSchemaValidator(SchemaValidator):
             if config.short_circuit_evaluation and any(not i.ok() for i in sub_results):
                 break
 
-        return SchemaValidationResult(self, kw_results)
+        result = SchemaValidationResult(self, kw_results)
+        if result.ok and config.postprocessor:
+            try:
+                config.postprocessor(instance, self)
+            except PostProcessorException as e:
+                return SchemaValidationResult(self, [KeywordValidationResult([], [], str(e))])
+
+        return result
 
     def _read(self, key: str, type_type: any, type_name: str, unparsed_keys: Set[str], default: any) -> any:
         try:
